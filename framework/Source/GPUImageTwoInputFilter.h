@@ -18,4 +18,5 @@ extern NSString *const kGPUImageTwoInputTextureVertexShaderString;
 - (void)disableFirstFrameCheck;
 - (void)disableSecondFrameCheck;
 
+@property (nonatomic, assign) BOOL useSecondInputTiming;
 @end
