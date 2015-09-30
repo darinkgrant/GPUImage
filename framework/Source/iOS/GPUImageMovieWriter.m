@@ -45,6 +45,7 @@ NSString *const kGPUImageColorSwizzlingFragmentShaderString = SHADER_STRING
 
 - (void)renderAtInternalSizeUsingFramebuffer:(GPUImageFramebuffer *)inputFramebufferToUse;
 
+@property (assign) BOOL allowWriteAudio;
 @end
 
 @implementation GPUImageMovieWriter
@@ -266,6 +267,7 @@ NSString *const kGPUImageColorSwizzlingFragmentShaderString = SHADER_STRING
 
 - (void)startRecording;
 {
+    _allowWriteAudio = NO;
     alreadyFinishedRecording = NO;
     startTime = kCMTimeInvalid;
     runSynchronouslyOnContextQueue(_movieWriterContext, ^{
@@ -362,6 +364,11 @@ NSString *const kGPUImageColorSwizzlingFragmentShaderString = SHADER_STRING
 
 - (void)processAudioBuffer:(CMSampleBufferRef)audioBuffer;
 {
+    if (!_allowWriteAudio)
+    {
+        return;
+    }
+    
     if (!isRecording)
     {
         return;
@@ -437,6 +444,7 @@ NSString *const kGPUImageColorSwizzlingFragmentShaderString = SHADER_STRING
             {
                 if (![assetWriterAudioInput appendSampleBuffer:audioBuffer])
                     NSLog(@"Problem appending audio buffer at time: %@", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, currentSampleTime)));
+                _allowWriteAudio = YES;
             }
             else
             {
