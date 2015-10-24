@@ -751,6 +751,7 @@ NSString *const kGPUImageColorSwizzlingFragmentShaderString = SHADER_STRING
             }
             else if(self.assetWriter.status == AVAssetWriterStatusWriting)
             {
+//                NSLog(@"Append at %@", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, frameTime)));
                 if (![assetWriterPixelBufferInput appendPixelBuffer:pixel_buffer withPresentationTime:frameTime])
                     NSLog(@"Problem appending pixel buffer at time: %@", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, frameTime)));
                 _allowWriteAudio = YES;
@@ -762,8 +763,6 @@ NSString *const kGPUImageColorSwizzlingFragmentShaderString = SHADER_STRING
             }
             CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
             
-            previousFrameTime = frameTime;
-            
             if (![GPUImageContext supportsFastTextureUpload])
             {
                 CVPixelBufferRelease(pixel_buffer);
@@ -774,6 +773,7 @@ NSString *const kGPUImageColorSwizzlingFragmentShaderString = SHADER_STRING
         
         [inputFramebufferForBlock unlock];
     });
+    previousFrameTime = frameTime;
 }
 
 - (NSInteger)nextAvailableTextureIndex;
