@@ -3,6 +3,8 @@
 #import "GPUImageFilter.h"
 #import "GPUImageVideoCamera.h"
 
+#define SINCE(timer_start) ([[NSDate date] timeIntervalSinceDate:(timer_start)])
+
 @interface GPUImageMovie () <AVPlayerItemOutputPullDelegate>
 {
     BOOL audioEncodingIsFinished, videoEncodingIsFinished;
@@ -22,6 +24,7 @@
     GLint yuvConversionLuminanceTextureUniform, yuvConversionChrominanceTextureUniform;
     GLint yuvConversionMatrixUniform;
     const GLfloat *_preferredConversion;
+    NSDate *timer;
     
     BOOL isFullYUVRange;
 
@@ -300,6 +303,7 @@
 - (void)processPlayerItem
 {
     runSynchronouslyOnVideoProcessingQueue(^{
+        
         displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkCallback:)];
         [displayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
         [displayLink setPaused:YES];
@@ -317,6 +321,7 @@
         [playerItemOutput setDelegate:self queue:videoProcessingQueue];
 
         [_playerItem addOutput:playerItemOutput];
+        timer = [NSDate date];
         [playerItemOutput requestNotificationOfMediaDataChangeWithAdvanceInterval:0.1];
         NSLog(@"PLAYERITEM SETUP");
     });
@@ -327,11 +332,13 @@
 	// Restart display link.
     _lastHostTime = kCMTimeInvalid;
 	[displayLink setPaused:NO];
-    NSLog(@"WILLCHANGE");
+    NSLog(@"WILLCHANGE: %f", SINCE(timer));
+    timer = [NSDate date];
 }
 
 - (void)outputSequenceWasFlushed:(AVPlayerItemOutput *)output{
-    NSLog(@"FLUSH");
+    NSLog(@"FLUSH: %f", SINCE(timer));
+    timer = [NSDate date];
 }
 
 - (void)displayLinkCallback:(CADisplayLink *)sender
@@ -362,7 +369,7 @@
     } else {
         CMTime elapsedTime = CMClockMakeHostTimeFromSystemUnits(sender.timestamp - _lastHostTime.value);
         if (CMTimeGetSeconds(elapsedTime) > 0.1 && _lastHostTime.value >= 0) {
-            NSLog(@"PIFIAMO AT: %@", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, outputItemTime)));
+            NSLog(@"PIFIAMO AT: %@ (%f)", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, outputItemTime)), SINCE(timer));
             // No new images for a while.  Shut down the display link to conserve power, but request a wakeup call if new images are coming.
             [sender setPaused:YES];
             [playerItemOutput requestNotificationOfMediaDataChangeWithAdvanceInterval:0.05];
