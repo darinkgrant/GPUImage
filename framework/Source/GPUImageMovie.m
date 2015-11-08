@@ -10,6 +10,7 @@
     AVAssetReader *reader;
     AVPlayerItemVideoOutput *playerItemOutput;
     CADisplayLink *displayLink;
+    CMTime _lastHostTime;
     CMTime previousFrameTime, processingFrameTime;
     CFAbsoluteTime previousActualFrameTime;
     BOOL keepLooping;
@@ -312,17 +313,25 @@
             [pixBuffAttributes setObject:@(kCVPixelFormatType_32BGRA) forKey:(id)kCVPixelBufferPixelFormatTypeKey];
         }
         playerItemOutput = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:pixBuffAttributes];
+        playerItemOutput.suppressesPlayerRendering = YES;
         [playerItemOutput setDelegate:self queue:videoProcessingQueue];
 
         [_playerItem addOutput:playerItemOutput];
         [playerItemOutput requestNotificationOfMediaDataChangeWithAdvanceInterval:0.1];
+        NSLog(@"PLAYERITEM SETUP");
     });
 }
 
 - (void)outputMediaDataWillChange:(AVPlayerItemOutput *)sender
 {
 	// Restart display link.
+    _lastHostTime = kCMTimeInvalid;
 	[displayLink setPaused:NO];
+    NSLog(@"WILLCHANGE");
+}
+
+- (void)outputSequenceWasFlushed:(AVPlayerItemOutput *)output{
+    NSLog(@"FLUSH");
 }
 
 - (void)displayLinkCallback:(CADisplayLink *)sender
@@ -336,16 +345,29 @@
 	CFTimeInterval nextVSync = ([sender timestamp] + [sender duration]);
 
 	CMTime outputItemTime = [playerItemOutput itemTimeForHostTime:nextVSync];
+    
+    if(memcmp(&_lastHostTime, &kCMTimeInvalid, sizeof(_lastHostTime)) == 0){
+        _lastHostTime = outputItemTime;
+    }
 
 	if ([playerItemOutput hasNewPixelBufferForItemTime:outputItemTime]) {
         __unsafe_unretained GPUImageMovie *weakSelf = self;
+        _lastHostTime = outputItemTime;
 		CVPixelBufferRef pixelBuffer = [playerItemOutput copyPixelBufferForItemTime:outputItemTime itemTimeForDisplay:NULL];
         if( pixelBuffer )
             runSynchronouslyOnVideoProcessingQueue(^{
                 [weakSelf processMovieFrame:pixelBuffer withSampleTime:outputItemTime];
                 CFRelease(pixelBuffer);
             });
-	}
+    } else {
+        CMTime elapsedTime = CMClockMakeHostTimeFromSystemUnits(sender.timestamp - _lastHostTime.value);
+        if (CMTimeGetSeconds(elapsedTime) > 0.1 && _lastHostTime.value >= 0) {
+            NSLog(@"PIFIAMO AT: %@", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, outputItemTime)));
+            // No new images for a while.  Shut down the display link to conserve power, but request a wakeup call if new images are coming.
+            [sender setPaused:YES];
+            [playerItemOutput requestNotificationOfMediaDataChangeWithAdvanceInterval:0.05];
+        }
+    }
 }
 
 - (BOOL)readNextVideoFrameFromOutput:(AVAssetReaderOutput *)readerVideoTrackOutput;
