@@ -12,7 +12,7 @@
     AVAssetReader *reader;
     AVPlayerItemVideoOutput *playerItemOutput;
     CADisplayLink *displayLink;
-    CMTime _lastHostTime;
+    CFTimeInterval _lastHostTime;
     CMTime previousFrameTime, processingFrameTime;
     CFAbsoluteTime previousActualFrameTime;
     BOOL keepLooping;
@@ -300,26 +300,29 @@
     }
 }
 
+- (void)resetOutput{
+    dispatch_queue_t videoProcessingQueue = [GPUImageContext sharedContextQueue];
+    NSMutableDictionary *pixBuffAttributes = [NSMutableDictionary dictionary];
+    if ([GPUImageContext supportsFastTextureUpload]) {
+        [pixBuffAttributes setObject:@(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) forKey:(id)kCVPixelBufferPixelFormatTypeKey];
+    }
+    else {
+        [pixBuffAttributes setObject:@(kCVPixelFormatType_32BGRA) forKey:(id)kCVPixelBufferPixelFormatTypeKey];
+    }
+    playerItemOutput = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:pixBuffAttributes];
+    playerItemOutput.suppressesPlayerRendering = YES;
+    [playerItemOutput setDelegate:self queue:videoProcessingQueue];
+}
+
 - (void)processPlayerItem
 {
     runSynchronouslyOnVideoProcessingQueue(^{
-        
         displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(displayLinkCallback:)];
         [displayLink addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
-        [displayLink setPaused:YES];
+        //[displayLink setPaused:YES];
+        _lastHostTime = 0.0;
 
-        dispatch_queue_t videoProcessingQueue = [GPUImageContext sharedContextQueue];
-        NSMutableDictionary *pixBuffAttributes = [NSMutableDictionary dictionary];
-        if ([GPUImageContext supportsFastTextureUpload]) {
-            [pixBuffAttributes setObject:@(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange) forKey:(id)kCVPixelBufferPixelFormatTypeKey];
-        }
-        else {
-            [pixBuffAttributes setObject:@(kCVPixelFormatType_32BGRA) forKey:(id)kCVPixelBufferPixelFormatTypeKey];
-        }
-        playerItemOutput = [[AVPlayerItemVideoOutput alloc] initWithPixelBufferAttributes:pixBuffAttributes];
-        playerItemOutput.suppressesPlayerRendering = YES;
-        [playerItemOutput setDelegate:self queue:videoProcessingQueue];
-
+        [self resetOutput];
         [_playerItem addOutput:playerItemOutput];
         timer = [NSDate date];
         [playerItemOutput requestNotificationOfMediaDataChangeWithAdvanceInterval:0.1];
@@ -330,9 +333,9 @@
 - (void)outputMediaDataWillChange:(AVPlayerItemOutput *)sender
 {
 	// Restart display link.
-    _lastHostTime = kCMTimeInvalid;
 	[displayLink setPaused:NO];
-    NSLog(@"WILLCHANGE: %f", SINCE(timer));
+    //_lastHostTime = [displayLink timestamp];
+    NSLog(@"WILLCHANGE: %f [%f]", SINCE(timer), _lastHostTime);
     timer = [NSDate date];
 }
 
@@ -349,17 +352,18 @@
 	 This pixel buffer can then be processed and later rendered on screen.
 	 */
 	// Calculate the nextVsync time which is when the screen will be refreshed next.
-	CFTimeInterval nextVSync = ([sender timestamp] + [sender duration]);
+    CFTimeInterval timestamp = [sender timestamp];
+	CFTimeInterval nextVSync = timestamp + [sender duration];
 
 	CMTime outputItemTime = [playerItemOutput itemTimeForHostTime:nextVSync];
     
-    if(memcmp(&_lastHostTime, &kCMTimeInvalid, sizeof(_lastHostTime)) == 0){
-        _lastHostTime = outputItemTime;
+    if(_lastHostTime == 0.0){
+        _lastHostTime = timestamp;
     }
 
 	if ([playerItemOutput hasNewPixelBufferForItemTime:outputItemTime]) {
         __unsafe_unretained GPUImageMovie *weakSelf = self;
-        _lastHostTime = outputItemTime;
+        _lastHostTime = timestamp;
 		CVPixelBufferRef pixelBuffer = [playerItemOutput copyPixelBufferForItemTime:outputItemTime itemTimeForDisplay:NULL];
         if( pixelBuffer )
             runSynchronouslyOnVideoProcessingQueue(^{
@@ -367,15 +371,24 @@
                 CFRelease(pixelBuffer);
             });
     } else {
-        CMTime elapsedTime = CMClockMakeHostTimeFromSystemUnits(sender.timestamp - _lastHostTime.value);
-        if (CMTimeGetSeconds(elapsedTime) > 0.1 && _lastHostTime.value >= 0) {
-            NSLog(@"PIFIAMO AT: %@ (%f)", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, outputItemTime)), SINCE(timer));
-            // No new images for a while.  Shut down the display link to conserve power, but request a wakeup call if new images are coming.
+        if (timestamp - _lastHostTime > 1.0) { //(_lastHostTime == 0.0 && SINCE(timer) > 0.1){//
+            NSLog(@"PIFIAMO AT: %@ (%f) (%f - %f = %f)", CFBridgingRelease(CMTimeCopyDescription(kCFAllocatorDefault, outputItemTime)), SINCE(timer), timestamp, _lastHostTime, timestamp - _lastHostTime);
+            //_lastHostTime = timestamp;
+            
+            // No new images for a while.  Shut down the display link to conserve power.
             [sender setPaused:YES];
-            [playerItemOutput requestNotificationOfMediaDataChangeWithAdvanceInterval:0.05];
+            /*
+            [_playerItem removeOutput:playerItemOutput];
+            [self resetOutput];
+            [_playerItem addOutput:playerItemOutput];*/
+            
+            //Request a wakeup call if new images are coming.
+            [playerItemOutput requestNotificationOfMediaDataChangeWithAdvanceInterval:0.1];
         }
     }
 }
+
+
 
 - (BOOL)readNextVideoFrameFromOutput:(AVAssetReaderOutput *)readerVideoTrackOutput;
 {
